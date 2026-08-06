@@ -1,0 +1,41 @@
+name: Vestaboard rotating messages
+
+# Fires every 15 minutes during the hours that cover 10:00-21:00 US Eastern
+# in BOTH standard and daylight time (UTC 14:00-02:00). The script itself
+# enforces the exact 10 AM-9 PM Eastern window, so it stays correct across
+# daylight-saving changes without editing this file.
+#
+# NOTE: GitHub's scheduled runners are best-effort and can be delayed by a
+# few minutes during peak load. Fine for a message board; just don't expect
+# atomic-clock precision.
+
+on:
+  schedule:
+    - cron: "*/15 0-2,14-23 * * *"
+  workflow_dispatch:            # lets you run it by hand from the Actions tab
+    inputs:
+      force:
+        description: "Post now even if outside the 10 AM-9 PM window"
+        type: boolean
+        default: false
+
+concurrency:
+  group: vestaboard
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Post to Vestaboard
+        env:
+          VESTA_TOKEN_1: ${{ secrets.VESTA_TOKEN_1 }}
+          VESTA_TOKEN_2: ${{ secrets.VESTA_TOKEN_2 }}
+          VESTA_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
+        run: python vestaboard_rotate.py
