@@ -178,8 +178,18 @@ def _post(url: str, header_name: str, token: str, payload: dict):
         return resp.status, resp.read().decode("utf-8", "replace")
 
 
+def _already_displayed(status, body) -> bool:
+    """Vestaboard returns 409 / 'FingerprintMatch' when the board already shows
+    this exact message. That's the desired end state, so treat it as success."""
+    if status == 409:
+        return True
+    b = (body or "").lower()
+    return "fingerprintmatch" in b or "already" in b
+
+
 def post_to_board(token: str, text: str, label: str) -> bool:
-    """Post a centered grid. Cloud API first, Read/Write API as fallback."""
+    """Post a centered grid. Cloud API first, Read/Write API as fallback.
+    A message already on the board (HTTP 409) counts as success."""
     matrix = text_to_matrix(text)
     attempts = [
         ("Cloud API", CLOUD_URL, "X-Vestaboard-Token", {"characters": matrix}),
@@ -192,6 +202,9 @@ def post_to_board(token: str, text: str, label: str) -> bool:
             if 200 <= status < 300:
                 print(f"[{label}] OK via {name} (HTTP {status})")
                 return True
+            if _already_displayed(status, resp):
+                print(f"[{label}] OK - already on board (via {name}, HTTP {status})")
+                return True
             last = f"{name}: HTTP {status} {resp[:200]}"
         except urllib.error.HTTPError as e:
             detail = ""
@@ -199,6 +212,9 @@ def post_to_board(token: str, text: str, label: str) -> bool:
                 detail = e.read().decode("utf-8", "replace")[:200]
             except Exception:
                 pass
+            if _already_displayed(e.code, detail):
+                print(f"[{label}] OK - already on board (via {name}, HTTP {e.code})")
+                return True
             last = f"{name}: HTTP {e.code} {detail}"
         except Exception as e:  # noqa: BLE001
             last = f"{name}: {e}"
