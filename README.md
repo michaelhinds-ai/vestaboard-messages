@@ -1,11 +1,12 @@
 # Vestaboard rotating messages
 
-Posts a rotating set of **4 messages** to **two Vestaboards** every **15 minutes**,
+Posts a rotating set of **4 messages** to **two Vestaboards** every **10 minutes**,
 only during **10:00 AM – 9:00 PM US Eastern**, using GitHub Actions (free, runs in
 the cloud — your computer does not need to be on).
 
 ```
-:00 → message 1     :15 → message 2     :30 → message 3     :45 → message 4
+Advances one message every 10 minutes, cycling through the list:
+msg 1 → msg 2 → msg 3 → msg 4 → msg 1 → ...
 ```
 
 The rotation stays correct through daylight-saving changes automatically, because
@@ -18,7 +19,7 @@ the script checks Eastern time itself rather than relying on the schedule's cloc
 | File | What it does |
 |------|--------------|
 | `vestaboard_rotate.py` | Picks the message for the current 15-min slot and posts it to both boards. Edit your 4 messages at the top. |
-| `.github/workflows/vestaboard.yml` | Runs the script every 15 minutes on GitHub's servers. |
+| `.github/workflows/vestaboard.yml` | Runs the script every 10 minutes on GitHub's servers. |
 
 Your board tokens are **not** stored in these files — they're added to GitHub as
 encrypted "secrets" (step 3 below).
@@ -60,7 +61,7 @@ Add two:
   → **Run workflow**. This posts immediately (ignoring the time window) so you can
   confirm both boards flip. Watch the run log — each board should report `OK`.
 
-That's it. From then on it runs itself every 15 minutes, 10 AM–9 PM Eastern.
+That's it. From then on it runs itself every 10 minutes, 10 AM–9 PM Eastern.
 
 ---
 

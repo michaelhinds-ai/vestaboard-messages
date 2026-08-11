@@ -105,9 +105,10 @@ BOARDS = [
 # ---------------------------------------------------------------------------
 # Schedule / window settings
 # ---------------------------------------------------------------------------
-TIMEZONE  = "America/New_York"
-START_MIN = 10 * 60          # 10:00 AM  (minutes since midnight)
-END_MIN   = 21 * 60          #  9:00 PM
+TIMEZONE     = "America/New_York"
+START_MIN    = 10 * 60       # 10:00 AM  (minutes since midnight)
+END_MIN      = 21 * 60       #  9:00 PM
+INTERVAL_MIN = 10            # advance to the next message every N minutes
 # ---------------------------------------------------------------------------
 
 CLOUD_URL = "https://cloud.vestaboard.com/"
@@ -126,8 +127,11 @@ CHAR_MAP = {
 }
 
 
-def slot_for(minute: int) -> int:
-    return (minute // 15) % 4
+def index_for(mins_since_midnight: int, count: int) -> int:
+    """Which message to show now: advance one step every INTERVAL_MIN minutes,
+    cycling through the whole list. Works for any number of messages, and a
+    slightly-late run still lands on the message for the current time block."""
+    return (mins_since_midnight // INTERVAL_MIN) % count
 
 
 def in_window(mins_since_midnight: int) -> bool:
@@ -227,8 +231,7 @@ def main():
 
     now = datetime.now(ZoneInfo(TIMEZONE))
     mins = now.hour * 60 + now.minute
-    slot = slot_for(now.minute)
-    print(f"Now: {now:%Y-%m-%d %H:%M %Z}  (minute {now.minute}, slot {slot + 1}/4)")
+    print(f"Now: {now:%Y-%m-%d %H:%M %Z}  (rotating every {INTERVAL_MIN} min)")
 
     if not in_window(mins) and not force:
         print(f"Outside window ({START_MIN//60:02d}:00-{END_MIN//60:02d}:00). Nothing to post.")
@@ -242,8 +245,11 @@ def main():
             print(f"[{board['name']}] no token in {board['token_env']} - skipping.")
             continue
         posted_any = True
-        text = board["messages"][slot]
-        print(f"[{board['name']}] slot {slot + 1}: {text.splitlines()[0] if text else ''!r} ...")
+        msgs = board["messages"]
+        idx = index_for(mins, len(msgs))
+        text = msgs[idx]
+        print(f"[{board['name']}] message {idx + 1}/{len(msgs)}: "
+              f"{text.splitlines()[0] if text else ''!r} ...")
         ok = post_to_board(token, text, board["name"]) and ok
 
     if not posted_any:
