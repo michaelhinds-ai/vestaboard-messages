@@ -1,6 +1,6 @@
 name: Vestaboard rotating messages
 
-# Fires every 15 minutes during the hours that cover 10:00-21:00 US Eastern
+# Fires every 10 minutes during the hours that cover 10:00-21:00 US Eastern
 # in BOTH standard and daylight time (UTC 14:00-02:00). The script itself
 # enforces the exact 10 AM-9 PM Eastern window, so it stays correct across
 # daylight-saving changes without editing this file.
@@ -11,7 +11,7 @@ name: Vestaboard rotating messages
 
 on:
   schedule:
-    - cron: "*/15 0-2,14-23 * * *"
+    - cron: "*/10 0-2,14-23 * * *"
   workflow_dispatch:            # lets you run it by hand from the Actions tab
     inputs:
       force:
