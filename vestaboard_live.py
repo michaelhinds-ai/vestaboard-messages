@@ -70,12 +70,6 @@ def log(msg):
 
 # ---------------------------- rendering -------------------------------------
 
-def lines_to_text(lines):
-    """Pre-laid-out lines. Rotation's renderer collapses spaces, so score rows
-    are padded to full width here and survive intact (22 chars = no shift)."""
-    return "\n".join(lines)
-
-
 def raw_matrix(lines):
     """Place lines verbatim, centering any shorter than 22 chars."""
     lines = [l.upper()[:COLS] for l in lines][:ROWS]
@@ -94,10 +88,26 @@ def score_row(name, score):
 
 # ---------------------------- ESPN parsing ----------------------------------
 
+HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/128.0 Safari/537.36"),
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.espn.com/",
+}
+
+
 def fetch(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "vestaboard-live/1.0"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.loads(r.read().decode("utf-8"))
+    """Try ESPN's main API host, then its alternate host."""
+    last = None
+    for u in (url, url.replace("site.api.espn.com", "site.web.api.espn.com")):
+        try:
+            req = urllib.request.Request(u, headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=15) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except Exception as e:  # noqa: BLE001
+            last = e
+    raise last
 
 
 def clock_text(status):
