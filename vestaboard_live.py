@@ -7,7 +7,7 @@ Always-on Vestaboard worker: message rotation + live football score flashes.
 - Polls ESPN's scoreboard. When a game involving a tracked team has a score
   change, BOTH boards show the game + score for FLASH_SECONDS, then go back
   to their rotation message.
-- Also flashes each tracked game's FINAL once.
+- Also flashes kickoff, 2nd-half start, turnovers, and FINAL.
 
 Run:  VESTA_TOKEN_1=... VESTA_TOKEN_2=... python vestaboard_live.py
 Only needs the Python standard library.
@@ -37,6 +37,7 @@ COLLEGE_TEAMS = {
     194:  "OHIO STATE",
     145:  "OLE MISS",
     61:   "GEORGIA",
+    130:  "MICHIGAN",
 }
 NFL_TEAMS = {
     10: "TITANS",
@@ -53,6 +54,10 @@ FLASH_OPPONENT_SCORES = True  # also flash when the other team scores
 FLASH_FINALS         = True   # flash "FINAL" once when a tracked game ends
 SPORTS_ONLY_IN_WINDOW = True  # only flash during the rotation hours
 PAT_SUPPRESS_SECONDS = 300    # a 1- or 2-pt score right after a TD updates silently
+FLASH_KICKOFF        = True   # flash when a tracked game starts
+FLASH_SECOND_HALF    = True   # flash when the 2nd half starts
+FLASH_TURNOVERS      = True   # interceptions, lost fumbles, turnover on downs
+PREGAME_FAST_POLL_MIN = 20    # start fast polling this many minutes before kickoff
 
 FEEDS = [
     ("college", "https://site.api.espn.com/apis/site/v2/sports/football/"
@@ -146,9 +151,27 @@ def parse_games(data, tracked):
             continue
         teams.sort(key=lambda t: t["homeAway"] != "away")   # away first, home second
         status = comp.get("status") or ev.get("status") or {}
+
+        sit = comp.get("situation") or {}
+        lp = sit.get("lastPlay") or {}
+        try:
+            poss = int(sit.get("possession")) if sit.get("possession") else None
+        except (TypeError, ValueError):
+            poss = None
+
+        try:
+            start = datetime.fromisoformat((ev.get("date") or "").replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            start = None
+
         yield {"id": ev.get("id"), "teams": teams,
                "state": status.get("type", {}).get("state"),
-               "clock": clock_text(status), "tracked": tracked}
+               "period": status.get("period", 0) or 0,
+               "clock": clock_text(status), "tracked": tracked,
+               "start": start, "possession": poss,
+               "play_id": lp.get("id"),
+               "play_type": ((lp.get("type") or {}).get("text") or "").lower(),
+               "play_text": (lp.get("text") or "").lower()}
 
 
 def headline_for(delta):
@@ -161,16 +184,29 @@ def headline_for(delta):
     return "SCORE"
 
 
-# ---------------------------- score tracking --------------------------------
+def turnover_kind(g):
+    """'INTERCEPTION', 'FUMBLE' or None, from ESPN's last-play info."""
+    t = g["play_type"] + " " + g["play_text"]
+    if "intercept" in t:
+        return "INTERCEPTION"
+    if "fumble" in t and ("opponent" in t or "return" in t or "recovered by" in t):
+        return "FUMBLE"
+    if "turnover on downs" in t:
+        return "TURNOVER ON DOWNS"
+    return None
+
+
+# ---------------------------- game tracking ---------------------------------
 
 class ScoreWatcher:
     def __init__(self):
-        self.games = {}      # event id -> {"scores": {tid: n}, "state": s}
+        self.games = {}      # event id -> last seen state
         self.last_td = {}    # (event id, tid) -> timestamp
         self.any_live = False
 
     def poll(self):
         flashes, live = [], False
+        soon = time.time() + PREGAME_FAST_POLL_MIN * 60
         for label, url, tracked in FEEDS:
             if not tracked:
                 continue
@@ -180,7 +216,8 @@ class ScoreWatcher:
                 log(f"[{label}] fetch failed: {e}")
                 continue
             for g in parse_games(data, tracked):
-                live |= g["state"] == "in"
+                if g["state"] == "in" or (g["state"] == "pre" and g["start"] and g["start"] <= soon):
+                    live = True           # poll fast during games and just before kickoff
                 flashes += self._diff(g)
         self.any_live = live
         return flashes
@@ -189,11 +226,26 @@ class ScoreWatcher:
         eid, now = g["id"], time.time()
         scores = {t["id"]: t["score"] for t in g["teams"]}
         prev = self.games.get(eid)
-        self.games[eid] = {"scores": scores, "state": g["state"]}
+        self.games[eid] = {"scores": scores, "state": g["state"],
+                           "period": g["period"], "play_id": g["play_id"]}
         if prev is None:                      # first sighting: seed, don't flash
             return []
 
         out = []
+
+        # Game start / second half
+        if FLASH_KICKOFF and prev["state"] == "pre" and g["state"] == "in":
+            out.append(self._card("KICKOFF!", "GAME ON", g))
+        elif FLASH_SECOND_HALF and g["state"] == "in" and prev["period"] <= 2 and g["period"] >= 3:
+            out.append(self._card("2ND HALF", "UNDERWAY", g))
+
+        # Turnover (new play only)
+        tkind = None
+        if FLASH_TURNOVERS and g["play_id"] and g["play_id"] != prev["play_id"]:
+            tkind = turnover_kind(g)
+
+        # Scores
+        scored = False
         for t in g["teams"]:
             delta = t["score"] - prev["scores"].get(t["id"], t["score"])
             if delta <= 0:
@@ -205,7 +257,18 @@ class ScoreWatcher:
                 continue
             if delta >= 6:
                 self.last_td[(eid, t["id"])] = now
-            out.append(self._card(headline_for(delta), t["name"] + "!", g))
+            head = headline_for(delta)
+            if delta >= 6 and tkind == "INTERCEPTION":
+                head = "PICK SIX"
+            elif delta >= 6 and tkind == "FUMBLE":
+                head = "SCOOP AND SCORE"
+            out.append(self._card(head, t["name"] + "!", g))
+            scored = True
+
+        if tkind and not scored:
+            names = {t["id"]: t["name"] for t in g["teams"]}
+            who = names.get(g["possession"], "")      # team that now has the ball
+            out.append(self._card(tkind + "!", (who + " BALL") if who else "", g))
 
         if FLASH_FINALS and g["state"] == "post" and prev["state"] != "post":
             out.append(self._card("FINAL", "", g))
