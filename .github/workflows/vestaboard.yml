@@ -10,8 +10,6 @@ name: Vestaboard rotating messages
 # atomic-clock precision.
 
 on:
-  schedule:
-    - cron: "*/10 0-2,14-23 * * *"
   workflow_dispatch:            # lets you run it by hand from the Actions tab
     inputs:
       force:
