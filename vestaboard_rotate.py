@@ -10,7 +10,7 @@ Each board rotates through its OWN four messages, chosen by the current
     :30-:44  -> message 3
     :45-:59  -> message 4
 
-Only posts during the active window (default 10:00-21:00 America/New_York).
+Only posts during the active window (default 09:00-22:00 America/New_York).
 Outside that window it exits quietly without touching the boards.
 
 Board tokens are read from environment variables so they never live in the
@@ -106,8 +106,8 @@ BOARDS = [
 # Schedule / window settings
 # ---------------------------------------------------------------------------
 TIMEZONE     = "America/New_York"
-START_MIN    = 10 * 60       # 10:00 AM  (minutes since midnight)
-END_MIN      = 21 * 60       #  9:00 PM
+START_MIN    =  9 * 60       #  9:00 AM  (minutes since midnight)
+END_MIN      = 22 * 60       # 10:00 PM
 INTERVAL_MIN = 10            # advance to the next message every N minutes
 # ---------------------------------------------------------------------------
 
