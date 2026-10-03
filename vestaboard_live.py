@@ -11,6 +11,8 @@ Always-on Vestaboard worker: message rotation + live sports flashes.
               2nd half, nail-biter, overtime, final / win celebration.
   Basketball: tip-off, lead changes, scoring runs, halftime, nail-biter,
               overtime, final / win celebration.
+- Between rotations, drops in fun cards (bourbon facts, sayings, trivia)
+  from fun_content.py on one board at a time, so a promo is always showing.
 
 Run:  VESTA_TOKEN_1=... VESTA_TOKEN_2=... python vestaboard_live.py
 Only needs the Python standard library (+ tzdata on some hosts).
@@ -23,10 +25,13 @@ import urllib.request
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import random
+
 from vestaboard_rotate import (
-    BOARDS, TIMEZONE, ROWS, COLS, CHAR_MAP,
-    index_for, in_window, post_to_board,
+    BOARDS, TIMEZONE, ROWS, COLS, CHAR_MAP, INTERVAL_MIN,
+    index_for, in_window, post_to_board, wrap_lines,
 )
+import fun_content
 
 # ===========================================================================
 # TEAMS  (ESPN team IDs -> name shown on the board)
@@ -95,6 +100,13 @@ BB_LEAD_COOLDOWN      = 120   # min seconds between lead-change flashes per game
 BB_LEAD_MIN_POINTS    = 10    # ignore lead changes until combined score reaches this
 BB_CLOSE_MARGIN       = 5
 BB_CLOSE_SECONDS      = 120   # last 2 minutes of the 2nd half
+
+# Fun cards (content lives in fun_content.py)
+FUN_ENABLED       = True
+FUN_SCHEDULE      = {3: 0, 7: 1}  # minute within each rotation cycle -> board (0 = left, 1 = right)
+FUN_SECONDS       = 90            # how long a fact / saying stays up
+TRIVIA_Q_SECONDS  = 60            # trivia question...
+TRIVIA_A_SECONDS  = 45            # ...then the answer
 
 FEEDS = [
     ("college-fb", "football",
@@ -435,7 +447,64 @@ class Watcher:
         return out
 
 
+# ---------------------------- fun cards -------------------------------------
+
+class FunPicker:
+    """Cycles fact -> trivia -> saying, never repeating until a pool runs out."""
+    ORDER = ["fact", "trivia", "saying"]
+
+    def __init__(self):
+        self.pools = {"fact": [], "trivia": [], "saying": []}
+        self.turn = 0
+
+    def _draw(self, kind):
+        src = {"fact": fun_content.FACTS, "trivia": fun_content.TRIVIA,
+               "saying": fun_content.SAYINGS}[kind]
+        if not src:
+            return None
+        if not self.pools[kind]:
+            self.pools[kind] = random.sample(src, len(src))
+        return self.pools[kind].pop()
+
+    def next_steps(self):
+        """List of (text, seconds) to show on one board."""
+        for _ in range(len(self.ORDER)):
+            kind = self.ORDER[self.turn % len(self.ORDER)]
+            self.turn += 1
+            item = self._draw(kind)
+            if item is None:
+                continue
+            if kind == "trivia":
+                q, a = item
+                return [(f"BOURBON TRIVIA: {q}", TRIVIA_Q_SECONDS),
+                        (f"ANSWER: {a}", TRIVIA_A_SECONDS)]
+            return [(item, FUN_SECONDS)]
+        return []
+
+
+def check_fun_content():
+    """Log any fun card too long for the board (it would get cut off)."""
+    texts = list(fun_content.FACTS) + list(fun_content.SAYINGS)
+    for q, a in fun_content.TRIVIA:
+        texts += [f"BOURBON TRIVIA: {q}", f"ANSWER: {a}"]
+    for t in texts:
+        if len(wrap_lines(t.upper())) > ROWS:
+            log(f"WARNING fun card too long, will be cut off: {t}")
+
+
 # ---------------------------- board posting ---------------------------------
+
+def post_one(bi, text):
+    b = BOARDS[bi]
+    tok = os.environ.get(b["token_env"])
+    if tok:
+        post_to_board(tok, text, b["name"])
+
+
+def restore_one(bi, mins):
+    msgs = BOARDS[bi]["messages"]
+    post_one(bi, msgs[index_for(mins, len(msgs))])
+
 
 def post_matrix_all(grid):
     """Post one grid to every board (reuses the tested poster)."""
@@ -451,8 +520,10 @@ def post_matrix_all(grid):
         vr.text_to_matrix = original
 
 
-def post_rotation(mins):
-    for b in BOARDS:
+def post_rotation(mins, skip=()):
+    for bi, b in enumerate(BOARDS):
+        if bi in skip:
+            continue
         tok = os.environ.get(b["token_env"])
         if tok:
             msgs = b["messages"]
@@ -465,10 +536,12 @@ def main():
     if not any(os.environ.get(b["token_env"]) for b in BOARDS):
         raise SystemExit("No board tokens set (VESTA_TOKEN_1 / VESTA_TOKEN_2).")
 
-    watcher = Watcher()
+    watcher, fun = Watcher(), FunPicker()
     queue, shown_idx, next_poll = [], None, 0.0
     showing, show_until, min_until = False, 0.0, 0.0
+    board_fun, last_fun_slot = {}, None          # board index -> {"steps": [...], "until": ts}
     log("Vestaboard live worker started")
+    check_fun_content()
 
     while True:
         now = datetime.now(ZoneInfo(TIMEZONE))
@@ -497,13 +570,42 @@ def main():
             showing = True
             show_until = t + item["secs"]
             min_until = t + FLASH_SECONDS
+            board_fun.clear()                    # sports beats fun
         elif not showing and active:
+            # rotation (boards showing a fun card catch up when it ends)
             idx = index_for(mins, len(BOARDS[0]["messages"]))
             if idx != shown_idx:
-                post_rotation(mins)
+                post_rotation(mins, skip=set(board_fun))
                 shown_idx = idx
+
+            # advance / finish fun cards
+            for bi in list(board_fun):
+                st = board_fun[bi]
+                if t >= st["until"]:
+                    if st["steps"]:
+                        text, secs = st["steps"].pop(0)
+                        post_one(bi, text)
+                        st["until"] = t + secs
+                    else:
+                        del board_fun[bi]
+                        restore_one(bi, mins)
+
+            # start a fun card on schedule
+            slot = (now.hour, now.minute)
+            cyc = now.minute % INTERVAL_MIN
+            if FUN_ENABLED and cyc in FUN_SCHEDULE and slot != last_fun_slot:
+                last_fun_slot = slot
+                bi = FUN_SCHEDULE[cyc]
+                if bi < len(BOARDS) and bi not in board_fun and os.environ.get(BOARDS[bi]["token_env"]):
+                    steps = fun.next_steps()
+                    if steps:
+                        text, secs = steps.pop(0)
+                        log(f"FUN [{BOARDS[bi]['name']}]: {text}")
+                        post_one(bi, text)
+                        board_fun[bi] = {"steps": steps, "until": t + secs}
         elif not showing:
             shown_idx = None
+            board_fun.clear()
 
         time.sleep(2)
 
