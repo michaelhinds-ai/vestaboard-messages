@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """
-Vestaboard rotating-message poster (two boards, independent message sets).
+Vestaboard rotating-message poster (two boards, synced).
 
-Each board rotates through its OWN four messages, chosen by the current
-15-minute slot of the hour:
-
-    :00-:14  -> message 1
-    :15-:29  -> message 2
-    :30-:44  -> message 3
-    :45-:59  -> message 4
+Both boards show the SAME message at the same time, advancing to the next
+message every INTERVAL_MIN minutes and looping through MESSAGES.
 
 Only posts during the active window (default 09:00-22:00 America/New_York).
 Outside that window it exits quietly without touching the boards.
@@ -31,14 +26,13 @@ from zoneinfo import ZoneInfo
 ROWS, COLS = 6, 22
 
 # ---------------------------------------------------------------------------
-# MESSAGES
-# One list of four per board, in slot order (:00, :15, :30, :45).
+# MESSAGES  (both boards show the same one, in this order, looping)
 # Use "\n" for line breaks. Every line is auto-centered on the 6x22 board.
 # Keep each line <= 22 characters; keep each message <= 6 lines.
+# Add or remove messages freely: the loop length adjusts automatically.
 # ---------------------------------------------------------------------------
 
-LEFT_MESSAGES = [
-    # :00
+MESSAGES = [
     "FILL YOUR OWN BOURBON\n"
     "FROM THE BARREL\n"
     "\n"
@@ -46,13 +40,11 @@ LEFT_MESSAGES = [
     "7 YEAR RYE\n"
     "ONLY $99",
 
-    # :15
     "WHISKEY STRAIGHT FROM\n"
     "THE BARREL!\n"
     "\n"
     "TRY IT NOW!",
 
-    # :30
     "HEY YOU...\n"
     "YES... YOU...\n"
     "\n"
@@ -60,16 +52,6 @@ LEFT_MESSAGES = [
     "WHISKEY FROM\n"
     "THE BARREL",
 
-    # :45
-    "LOOKING FOR A GIFT\n"
-    "OR SOMETHING SPECIAL?\n"
-    "\n"
-    "BOTTLE YOUR OWN\n"
-    "ONLY $99",
-]
-
-RIGHT_MESSAGES = [
-    # :00
     "FILL YOUR OWN BOURBON\n"
     "FROM THE BARREL\n"
     "\n"
@@ -77,19 +59,11 @@ RIGHT_MESSAGES = [
     "6YR HONEY BOURBON\n"
     "ONLY $99",
 
-    # :15
-    "TRY WHISKEY STRAIGHT\n"
-    "FROM THE BARREL!\n"
-    "\n"
-    "TRY IT NOW!",
-
-    # :30
     "YOU WOULD LOOK\n"
     "REAL COOL WITH A\n"
     "POUR OF THIS\n"
     "IN YOUR HAND",
 
-    # :45
     "LOOKING FOR A GIFT\n"
     "OR SOMETHING SPECIAL?\n"
     "\n"
@@ -98,8 +72,8 @@ RIGHT_MESSAGES = [
 ]
 
 BOARDS = [
-    {"name": "left",  "token_env": "VESTA_TOKEN_1", "messages": LEFT_MESSAGES},
-    {"name": "right", "token_env": "VESTA_TOKEN_2", "messages": RIGHT_MESSAGES},
+    {"name": "left",  "token_env": "VESTA_TOKEN_1", "messages": MESSAGES},
+    {"name": "right", "token_env": "VESTA_TOKEN_2", "messages": MESSAGES},
 ]
 
 # ---------------------------------------------------------------------------

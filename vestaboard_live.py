@@ -12,7 +12,7 @@ Always-on Vestaboard worker: message rotation + live sports flashes.
   Basketball: tip-off, lead changes, scoring runs, halftime, nail-biter,
               overtime, final / win celebration.
 - Between rotations, drops in fun cards (bourbon facts, sayings, trivia)
-  from fun_content.py on one board at a time, so a promo is always showing.
+  from fun_content.py. With SYNC_BOARDS on, both boards show the same card.
 
 Run:  VESTA_TOKEN_1=... VESTA_TOKEN_2=... python vestaboard_live.py
 Only needs the Python standard library (+ tzdata on some hosts).
@@ -103,7 +103,9 @@ BB_CLOSE_SECONDS      = 120   # last 2 minutes of the 2nd half
 
 # Fun cards (content lives in fun_content.py)
 FUN_ENABLED       = True
+SYNC_BOARDS       = True          # True: fun cards show on BOTH boards at once
 FUN_SCHEDULE      = {3: 0, 7: 1}  # minute within each rotation cycle -> board (0 = left, 1 = right)
+                                  # (with SYNC_BOARDS, the board number is ignored)
 FUN_SECONDS       = 90            # how long a fact / saying stays up
 TRIVIA_Q_SECONDS  = 60            # trivia question...
 TRIVIA_A_SECONDS  = 45            # ...then the answer
@@ -595,14 +597,16 @@ def main():
             cyc = now.minute % INTERVAL_MIN
             if FUN_ENABLED and cyc in FUN_SCHEDULE and slot != last_fun_slot:
                 last_fun_slot = slot
-                bi = FUN_SCHEDULE[cyc]
-                if bi < len(BOARDS) and bi not in board_fun and os.environ.get(BOARDS[bi]["token_env"]):
-                    steps = fun.next_steps()
-                    if steps:
-                        text, secs = steps.pop(0)
-                        log(f"FUN [{BOARDS[bi]['name']}]: {text}")
+                targets = range(len(BOARDS)) if SYNC_BOARDS else [FUN_SCHEDULE[cyc]]
+                targets = [bi for bi in targets if bi < len(BOARDS) and bi not in board_fun
+                           and os.environ.get(BOARDS[bi]["token_env"])]
+                steps = fun.next_steps() if targets else []
+                if steps:
+                    text, secs = steps[0]
+                    log(f"FUN [{', '.join(BOARDS[bi]['name'] for bi in targets)}]: {text}")
+                    for bi in targets:
                         post_one(bi, text)
-                        board_fun[bi] = {"steps": steps, "until": t + secs}
+                        board_fun[bi] = {"steps": list(steps[1:]), "until": t + secs}
         elif not showing:
             shown_idx = None
             board_fun.clear()
